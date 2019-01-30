@@ -1,4 +1,7 @@
 *.pkl
+*.pickle
+*.txt
 *.obj
 __pycache__/
+checkpoints*/
 script.py
