@@ -2,6 +2,8 @@
 Numpy, Tensorflow and PyTorch implementation of SMPL model. For any questions, feel free to contact [me](https://github.com/CalciferZh/SMPL).
 
 ## Overview
+### Update on 20190130 by [Lotayou](https://github.com/Lotayou
+3D-pose to SMPL parameters regressor: training complete, merging with smpl_torch_batch Module.
 
 ### Update on 20190127 by [Lotayou](https://github.com/Lotayou)
 I write a PyTorch implementation based on CalciferZh's Tensorflow code, which supports batch processing and GPU training. The implementation is hosted in `smpl_torch.py` along with the testing example.
