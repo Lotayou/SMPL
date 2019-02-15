@@ -1,12 +1,12 @@
 import torch
 from torch import nn
 import os
-from torch.optim import Adam
+from torch import optim
 import numpy as np
 import pickle
 from smpl_torch_batch import SMPLModel
 from torch.utils.data import Dataset, DataLoader
-
+from sys import platform
 
 class Joint2SMPLDataset(Dataset):
     '''
@@ -78,27 +78,36 @@ class Regressor(nn.Module):
 
 if __name__ == '__main__':
     torch.backends.cudnn.enabled=True
-    batch_size = 64
-    max_batch_num = 100
+    batch_size = 16
+    max_batch_num = 40
     dataset = Joint2SMPLDataset('train_dataset.pickle', batch_size)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
     
     torch.set_default_dtype(torch.float64)
     device = torch.device('cuda')
-    reg = Regressor(batch_size=batch_size).cuda()
+    reg = Regressor(batch_size=batch_size, hidden_layer=3, hidden_dim=512).cuda()
     smpl = SMPLModel(device=device)
     loss_op = nn.L1Loss()
-    optimizer = Adam(reg.parameters(), lr=0.001, betas=(0.5,0.999), weight_decay=1e-5)
+    optimizer = optim.Adam(reg.parameters(), lr=0.0005, weight_decay=1e-5)
+    #optimizer = optim.Adam(reg.parameters(), lr=0.0002, betas=(0.5,0.999), weight_decay=1e-5)
     
     batch_num = 0
-    ckpt_path = './checkpoints_recon_loss_hl_3'
+    ckpt_path = 'checkpoints_0215'
     if not os.path.isdir(ckpt_path):
         os.mkdir(ckpt_path)
     if batch_num > 0 and os.path.isfile('%s/regressor_%03d.pth' % (ckpt_path, batch_num)):
-        state_dict = torch.load_state_dict('%s/regressor_%03d.pth' % (ckpt_path, batch_num))
-        reg.load(state_dict)
+        state_dict = torch.load('%s/regressor_%03d.pth' % (ckpt_path, batch_num))
+        reg.load_state_dict(state_dict)
         
-    file = open('train_log_recon_loss_hl_3.txt', 'w')
+    # copy current file into checkpoint folder to record parameters, ugly.
+    if platform == 'linux':
+        cmd = 'cp train_regressor_joints_recon_loss.py ./{}/snapshot.py'.format(ckpt_path)
+    else:
+        cmd = r'copy train_regressor_joints_recon_loss.py {}\snapshot.py'.format(ckpt_path)
+    print(cmd)
+    os.system(cmd)
+        
+    file = open('train_log_0215.txt', 'w')
 
     trans = torch.zeros((batch_size, 3), dtype=torch.float64, device=device)
 
@@ -113,7 +122,7 @@ if __name__ == '__main__':
             
             pred_thetas, pred_betas = reg(joints)
             _, recon_joints = smpl(pred_betas, pred_thetas, trans)
-            loss_joints = loss_op(recon_joints.contiguous().view(batch_size, -1), joints)
+            loss_joints = loss_op(recon_joints, joints.view(batch_size, 19, 3))
             optimizer.zero_grad()
             loss_joints.backward()
             optimizer.step()
@@ -130,7 +139,7 @@ if __name__ == '__main__':
         with torch.no_grad():
             pred_thetas, pred_betas = reg(joints)
             _, recon_joints = smpl(pred_betas, pred_thetas, trans)
-            loss_joints = loss_op(recon_joints.contiguous().view(batch_size, -1), joints)
+            loss_joints = loss_op(recon_joints, joints.view(batch_size, 19, 3))
             line = 'Validation: loss_theta: %10.6f' % loss_joints.data.item()
             print(line)
             file.write(line+'\n')
