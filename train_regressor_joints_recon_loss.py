@@ -88,11 +88,11 @@ if __name__ == '__main__':
     reg = Regressor(batch_size=batch_size, hidden_layer=3, hidden_dim=512).cuda()
     smpl = SMPLModel(device=device)
     loss_op = nn.L1Loss()
-    optimizer = optim.Adam(reg.parameters(), lr=0.0005, weight_decay=1e-5)
+    optimizer = optim.Adagrad(reg.parameters(), lr=0.0002, weight_decay=1e-5)
     #optimizer = optim.Adam(reg.parameters(), lr=0.0002, betas=(0.5,0.999), weight_decay=1e-5)
     
     batch_num = 0
-    ckpt_path = 'checkpoints_0215'
+    ckpt_path = 'checkpoints_0217'
     if not os.path.isdir(ckpt_path):
         os.mkdir(ckpt_path)
     if batch_num > 0 and os.path.isfile('%s/regressor_%03d.pth' % (ckpt_path, batch_num)):
@@ -107,7 +107,7 @@ if __name__ == '__main__':
     print(cmd)
     os.system(cmd)
         
-    file = open('train_log_0215.txt', 'w')
+    file = open('{}.txt'.format(ckpt_path.replace('checkpoints', 'train_log')), 'w')
 
     trans = torch.zeros((batch_size, 3), dtype=torch.float64, device=device)
 
