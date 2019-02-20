@@ -22,12 +22,20 @@ class SMPLModel(Module):
     self.v_template = torch.from_numpy(params['v_template']).type(torch.float64)
     self.shapedirs = torch.from_numpy(params['shapedirs']).type(torch.float64)
     self.kintree_table = params['kintree_table']
+    id_to_col = {self.kintree_table[1, i]: i
+                 for i in range(self.kintree_table.shape[1])}
+    self.parent = {
+      i: id_to_col[self.kintree_table[0, i]]
+      for i in range(1, self.kintree_table.shape[1])
+    }
     self.faces = params['f']
     self.device = device if device is not None else torch.device('cpu')
     for name in ['J_regressor', 'joint_regressor', 'weights', 'posedirs', 'v_template', 'shapedirs']:
       _tensor = getattr(self, name)
       print(' Tensor {} shape: '.format(name), _tensor.shape)
       setattr(self, name, _tensor.to(device))
+     
+    #print(self.parent)
 
   @staticmethod
   def rodrigues(r):
@@ -134,12 +142,7 @@ class SMPLModel(Module):
 
     """
     batch_num = betas.shape[0]
-    id_to_col = {self.kintree_table[1, i]: i
-                 for i in range(self.kintree_table.shape[1])}
-    parent = {
-      i: id_to_col[self.kintree_table[0, i]]
-      for i in range(1, self.kintree_table.shape[1])
-    }
+    
     v_shaped = torch.tensordot(betas, self.shapedirs, dims=([1], [2])) + self.v_template
     J = torch.matmul(self.J_regressor, v_shaped)
     R_cube_big = self.rodrigues(pose.view(-1, 1, 3)).reshape(batch_num, -1, 3, 3)
@@ -160,10 +163,10 @@ class SMPLModel(Module):
     for i in range(1, self.kintree_table.shape[1]):
       results.append(
         torch.matmul(
-          results[parent[i]],
+          results[self.parent[i]],
           self.with_zeros(
             torch.cat(
-              (R_cube_big[:, i], torch.reshape(J[:, i, :] - J[:, parent[i], :], (-1, 3, 1))),
+              (R_cube_big[:, i], torch.reshape(J[:, i, :] - J[:, self.parent[i], :], (-1, 3, 1))),
               dim=2
             )
           )
