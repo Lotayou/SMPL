@@ -119,11 +119,17 @@ class AcosRegressor(nn.Module):
             model += [ResBlock1d(indim=hidden_dim, use_dropout=use_dropout)]
         model += [nn.Linear(hidden_dim, thetadim)]
         self.model = nn.Sequential(*model)
+        self.clamp_eps = 1e-6
         
     def forward(self, x):
         # expect N * 19 * 3
         vec = x[:, self.limbs_index[0], :] - x[:, self.limbs_index[0], :]
+        # 20190220: normalize vector!!!
+        norm_vec = torch.norm(vec, dim=2, keepdim=True)
+        vec /= norm_vec
         prod = torch.bmm(vec, vec.transpose(1, 2))
+        # 20190220；clamp input to avoid NaN
+        prod = torch.clamp(prod, min=(-1+self.clamp_eps), max=1-self.clamp_eps)
         angles = torch.acos(prod).view(-1, 324)
         features = torch.cat((x.view(-1, 57), angles), dim=1)
         return self.model(features)
@@ -132,8 +138,9 @@ class AcosRegressor(nn.Module):
 if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES']='0'
     torch.backends.cudnn.enabled=True
-    batch_size = 128
+    batch_size = 64
     max_batch_num = 100
+    
     #dataset = Joint2SMPLDataset('train_dataset.pickle', batch_size)
     dataset = Joint2SMPLDataset('train_dataset_fix_beta_zero.pickle', batch_size, fix_beta_zero=True)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
@@ -147,7 +154,7 @@ if __name__ == '__main__':
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.333, patience=1, verbose=True)
     
     batch_num = 0
-    ckpt_path = 'checkpoints_0219_decay_1_3_100_epochs'
+    ckpt_path = 'checkpoints_0220_theta_recon_loss_v2'
     if not os.path.isdir(ckpt_path):
         os.mkdir(ckpt_path)
     if batch_num > 0 and os.path.isfile('%s/regressor_%03d.pth' % (ckpt_path, batch_num)):
@@ -166,7 +173,7 @@ if __name__ == '__main__':
 
     trans = torch.zeros((batch_size, 3), dtype=torch.float64, device=device)
 
-    while batch_num <= max_batch_num:
+    while batch_num < max_batch_num:
         batch_num += 1
         print('Epoch %03d: training...' % batch_num)
         reg.train()
@@ -178,12 +185,15 @@ if __name__ == '__main__':
             pred_thetas = reg(joints)
             _, recon_joints = smpl(betas, pred_thetas, trans)
             loss_joints = loss_op(recon_joints, joints)
+            loss_thetas = loss_op(pred_thetas, thetas)
+            loss = 5 * loss_thetas + loss_joints
             optimizer.zero_grad()
-            loss_joints.backward()
+            loss.backward()
             optimizer.step()
             
             if i % 32 == 0:
-                print('batch %04d: loss: %10.6f' % (i, loss_joints.data.item()))
+                print('batch %04d: loss joints: %10.6f loss thetas: % 10.6f' \
+                    % (i, loss_joints.data.item(), loss_thetas.data.item()))
         
         print('Validation: ')
         reg.eval()
@@ -195,12 +205,14 @@ if __name__ == '__main__':
             pred_thetas = reg(joints)
             _, recon_joints = smpl(betas, pred_thetas, trans)
             loss_joints = loss_op(recon_joints, joints)
-            line = 'Validation: loss_theta: %10.6f' % loss_joints.data.item()
+            loss_thetas = loss_op(pred_thetas, thetas)
+            line = 'batch %04d: loss joints: %10.6f loss thetas: % 10.6f' \
+                    % (i, loss_joints.data.item(), loss_thetas.data.item())
             print(line)
             file.write(line+'\n')
             scheduler.step(loss_joints)
            
-        if batch_num % 1 == 0:
+        if batch_num % 5 == 0:
             print('Save models...')
             torch.save(reg.state_dict(), '%s/regressor_%03d.pth' % (ckpt_path, batch_num))
     file.close()

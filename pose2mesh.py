@@ -4,9 +4,8 @@ import os
 from torch.optim import Adam
 import numpy as np
 import pickle
-from train_regressor_joints_recon_loss import Regressor, Joint2SMPLDataset
+from train_acos_regressor import AcosRegressor, Joint2SMPLDataset
 from smpl_torch_batch import SMPLModel
-from renderer import draw_skeleton
 from cv2 import imwrite
 from torch.utils.data import Dataset, DataLoader
 
@@ -14,19 +13,21 @@ class Pose2MeshModel(nn.Module):
     def __init__(self):
         super(Pose2MeshModel, self).__init__()
         if torch.cuda.is_available():
-            self.reg = Regressor(hidden_dim=512).cuda()
+            self.reg = AcosRegressor(hidden_dim=256).cuda()
             self.smpl = SMPLModel(device=torch.device('cuda'))
         else:
-            self.reg = Regressor(hidden_dim=512).cpu()
+            self.reg = AcosRegressorRegressor(hidden_dim=256).cpu()
             self.smpl = SMPLModel(device=torch.device('cpu'))
            
-        ckpt_path = './checkpoints_recon_loss_hl_3_hd_512'
-        state_dict = torch.load('%s/regressor_100.pth' % (ckpt_path))
+        ckpt_path = './checkpoints_0220_theta_recon_loss'
+        state_dict = torch.load('%s/regressor_035.pth' % (ckpt_path))
         self.reg.load_state_dict(state_dict)
             
     def forward(self, input):
         trans = torch.zeros((input.shape[0], 3), device=input.device)
-        thetas, betas = self.reg(input)
+        betas = torch.zeros((input.shape[0], 10), device=input.device)
+        thetas = self.reg(input)
+        print('Estimated theta:\n', thetas.detach().cpu().numpy())
         mesh, joints = self.smpl(betas, thetas, trans)
         return mesh, joints
         
@@ -45,12 +46,13 @@ if __name__ == '__main__':
     dataset = Joint2SMPLDataset('train_dataset.pickle', batch_size=64)
     index = np.random.randint(0, dataset.length)
     joints_npy = dataset[index:index+2]['joints']
+    thetas_npy = dataset[index:index+2]['thetas']
     
     # render joints
-    joints = torch.as_tensor(joints_npy, device=device)
+    joints = torch.as_tensor(joints_npy, device=device).reshape(-1, 19, 3)
+    print('Ground truth theta:\n', thetas_npy)
     # image = np.zeros((512, 512, 3), dtype=np.uint8)
     # joints_image = draw_skeleton(image, joints_npy[0].reshape(3, 19))
     # imwrite('Input_skeleton.png', joints_image)
-    np.savetxt('test_pose.xyz', joints_npy[0].reshape(19,3), delimiter=' ')
-    model.evaluate(joints, 'test_mesh.obj')
-        
+    np.savetxt('input_pose.xyz', joints_npy[0].reshape(19,3), delimiter=' ')
+    model.evaluate(joints, 'recon_mesh.obj')
