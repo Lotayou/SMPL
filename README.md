@@ -1,4 +1,5 @@
-# SMPL
+# SMPL Dev
+@ Current Progress: Trying to estimate thetas from skeleton-like representations.
 Numpy, Tensorflow and PyTorch implementation of SMPL model. For any questions, feel free to contact [me](https://github.com/CalciferZh/SMPL).
 
 ## Overview
