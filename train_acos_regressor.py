@@ -28,7 +28,7 @@ class Joint2SMPLDataset(Dataset):
         
         print(self.joints.shape)
         self.batch_size = batch_size
-        self.length = self.joints.shape[0] // 2
+        self.length = self.joints.shape[0]
         print(self.length)
         
     def __getitem__(self, item):
@@ -42,7 +42,7 @@ class Joint2SMPLDataset(Dataset):
         
     def rand_val_batch(self):
         length = self.length // self.batch_size
-        item = np.random.randint(0, length) + length
+        item = np.random.randint(0, length)
         js = self.joints[item*self.batch_size: (item+1)*self.batch_size]
         ts = self.thetas[item*self.batch_size: (item+1)*self.batch_size]
         if self.fix_beta_zero:
@@ -142,7 +142,9 @@ if __name__ == '__main__':
     max_batch_num = 100
     
     #dataset = Joint2SMPLDataset('train_dataset.pickle', batch_size)
-    dataset = Joint2SMPLDataset('train_dataset_fix_beta_zero.pickle', batch_size, fix_beta_zero=True)
+    theta_var = 1.0
+    training_stage = 5
+    dataset = Joint2SMPLDataset('train_dataset_5.pickle', batch_size, fix_beta_zero=True)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
     
     torch.set_default_dtype(torch.float64)
@@ -151,10 +153,10 @@ if __name__ == '__main__':
     smpl = SMPLModel(device=device)
     loss_op = nn.L1Loss()
     optimizer = optim.Adam(reg.parameters(), lr=0.0005, betas=(0.5, 0.999), weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.333, patience=1, verbose=True)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.25, patience=1, verbose=True)
     
     batch_num = 0
-    ckpt_path = 'checkpoints_0220_theta_recon_loss_v2'
+    ckpt_path = 'checkpoints_0225_direct_training'.format(theta_var)
     if not os.path.isdir(ckpt_path):
         os.mkdir(ckpt_path)
     if batch_num > 0 and os.path.isfile('%s/regressor_%03d.pth' % (ckpt_path, batch_num)):
@@ -186,7 +188,7 @@ if __name__ == '__main__':
             _, recon_joints = smpl(betas, pred_thetas, trans)
             loss_joints = loss_op(recon_joints, joints)
             loss_thetas = loss_op(pred_thetas, thetas)
-            loss = 5 * loss_thetas + loss_joints
+            loss = loss_thetas + 5 * loss_joints
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -215,4 +217,22 @@ if __name__ == '__main__':
         if batch_num % 5 == 0:
             print('Save models...')
             torch.save(reg.state_dict(), '%s/regressor_%03d.pth' % (ckpt_path, batch_num))
+            '''
+            if batch_num % 20 == 0 and training_stage < 5:
+                # Fine-tuning on the next dataset with larger theta_var
+                line = 'Switching dataset from theta_var = {}'.format(theta_var)
+                theta_var += 0.2
+                training_stage += 1
+                dataset = Joint2SMPLDataset('train_dataset_{}.pickle'.format(training_stage), 
+                    batch_size, fix_beta_zero=True)
+                dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
+                # Renew optimizer and scheduler
+                optimizer = optim.Adam(reg.parameters(), lr=0.0005, betas=(0.5, 0.999), weight_decay=1e-4)
+                scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', 
+                    factor=0.25, patience=1, verbose=True)
+                line += ' to theta_var = {}\n'.format(theta_var)
+                file.write(line)
+                print(line)
+             '''
+    
     file.close()

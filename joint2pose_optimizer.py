@@ -37,7 +37,7 @@ if __name__ == '__main__':
     
     for i in range(10):
         print('Test case %d:' % (i+1))
-        real_pose = torch.from_numpy((np.random.rand(1, pose_size) - 0.5) * 0.5)\
+        real_pose = torch.from_numpy((np.random.rand(1, pose_size) - 0.5) * 1)\
               .type(torch.float64).to(device)
         real_result, real_joints = model(betas, real_pose, trans)
         model.write_obj(real_result[0].detach().cpu().numpy(), 'joint2pose_result/real_mesh_{}.obj'.format(i))
@@ -50,10 +50,11 @@ if __name__ == '__main__':
         
         s = time()
         prev_loss = None
-        for step in range(1000):
+        for step in range(2000):
             _, test_joints = model(betas, test_pose, trans)
             loss = loss_op(test_joints, real_joints)
-            print('Step {:03d}: loss: {:10.6f}'.format(step, loss.data.item()))
+            if step % 50 == 0:
+                print('Step {:03d}: loss: {:10.6f}'.format(step, loss.data.item()))
             cur_loss = loss.data.item()
             if prev_loss is not None and cur_loss > prev_loss:
                 break

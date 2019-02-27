@@ -5,7 +5,7 @@ import numpy as np
 from tqdm import tqdm
 from smpl_torch_batch import SMPLModel
 
-def create_dataset(num_samples, dataset_name, batch_size=32, gpu_id=[0]):
+def create_dataset(num_samples, dataset_name, batch_size=32, theta_var=1.0, gpu_id=[0]):
     if len(gpu_id) > 0 and torch.cuda.is_available():
         os.environ['CUDA_VISIBLE_DEVICES'] = str(gpu_id[0])
         device = torch.device('cuda')
@@ -19,9 +19,11 @@ def create_dataset(num_samples, dataset_name, batch_size=32, gpu_id=[0]):
     np.random.seed(9608)
     model = SMPLModel(device=device)
     
-    d_poses = torch.from_numpy((np.random.rand(num_samples, pose_size) - 0.5) * 1)\
+    d_poses = torch.from_numpy((np.random.rand(num_samples, pose_size) - 0.5) * theta_var)\
               .type(torch.float64).to(device)
-    d_betas = torch.from_numpy((np.random.rand(num_samples, beta_size) - 0.5) * 0.2) \
+    #d_betas = torch.from_numpy((np.random.rand(num_samples, beta_size) - 0.5) * 0.2) \
+    #          .type(torch.float64).to(device)
+    d_betas = torch.from_numpy(np.zeros((num_samples, beta_size)))\
               .type(torch.float64).to(device)
     __trans = torch.from_numpy(np.zeros((batch_size, 3))).type(torch.float64).to(device)
     joints = []
@@ -40,11 +42,13 @@ def create_dataset(num_samples, dataset_name, batch_size=32, gpu_id=[0]):
     dataset = {
         'joints': d_joints.detach().cpu().numpy(),
         'thetas': d_poses.detach().cpu().numpy(),
-        'betas': d_betas.detach().cpu().numpy()
+        #'betas': d_betas.detach().cpu().numpy()
     }
     with open(dataset_name, 'wb') as f:
         pickle.dump(dataset, f)
     
 
 if __name__ == '__main__':
-    create_dataset(num_samples=262144, batch_size=64, dataset_name='./train_dataset.pickle')
+    for tv in [0.2, 0.4, 0.6, 0.8, 1.0]:
+        create_dataset(num_samples=262144, batch_size=64, theta_var=tv, 
+            dataset_name='./train_dataset_{}.pickle'.format(tv))

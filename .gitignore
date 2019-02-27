@@ -2,6 +2,8 @@
 *.pickle
 *.txt
 *.obj
+*.xlsx
+*.xyz
 __pycache__/
 checkpoints*/
 script.py

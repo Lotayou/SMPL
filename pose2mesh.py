@@ -19,8 +19,8 @@ class Pose2MeshModel(nn.Module):
             self.reg = AcosRegressorRegressor(hidden_dim=256).cpu()
             self.smpl = SMPLModel(device=torch.device('cpu'))
            
-        ckpt_path = './checkpoints_0220_theta_recon_loss'
-        state_dict = torch.load('%s/regressor_035.pth' % (ckpt_path))
+        ckpt_path = './checkpoints_0225_direct_training'
+        state_dict = torch.load('%s/regressor_100.pth' % (ckpt_path))
         self.reg.load_state_dict(state_dict)
             
     def forward(self, input):
@@ -43,7 +43,7 @@ if __name__ == '__main__':
     device = torch.device('cuda')
     model = Pose2MeshModel()
     
-    dataset = Joint2SMPLDataset('train_dataset.pickle', batch_size=64)
+    dataset = Joint2SMPLDataset('train_dataset_5.pickle', batch_size=64, fix_beta_zero=True)
     index = np.random.randint(0, dataset.length)
     joints_npy = dataset[index:index+2]['joints']
     thetas_npy = dataset[index:index+2]['thetas']
@@ -56,3 +56,4 @@ if __name__ == '__main__':
     # imwrite('Input_skeleton.png', joints_image)
     np.savetxt('input_pose.xyz', joints_npy[0].reshape(19,3), delimiter=' ')
     model.evaluate(joints, 'recon_mesh.obj')
+
