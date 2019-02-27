@@ -33,6 +33,9 @@ class SMPLModel(Module):
     for name in ['J_regressor', 'joint_regressor', 'weights', 'posedirs', 'v_template', 'shapedirs']:
       _tensor = getattr(self, name)
       print(' Tensor {} shape: '.format(name), _tensor.shape)
+      if name == 'joint_regressor':
+        np.savetxt('old_joint_regressor.txt', _tensor)
+      
       setattr(self, name, _tensor.to(device))
      
     #print(self.parent)
@@ -211,21 +214,26 @@ def test_gpu(gpu_id=[0]):
   beta_size = 10
 
   np.random.seed(9608)
-  model = SMPLModel(device=device)
-  for i in range(10):
-      pose = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 0.4)\
-              .type(torch.float64).to(device)
-      betas = torch.from_numpy((np.random.rand(32, beta_size) - 0.5) * 0.06) \
-              .type(torch.float64).to(device)
-      s = time()
-      trans = torch.from_numpy(np.zeros((32, 3))).type(torch.float64).to(device)
-      result, joints = model(betas, pose, trans)
-      print(time() - s)
-      
-  # outmesh_path = './smpl_torch_{}.obj'
-  # for i in range(result.shape[0]):
-      # model.write_obj(result[i], outmesh_path.format(i))
+  model = SMPLModel(
+                    device=device,
+                    model_path = './model_24_joints.pkl'
+                    )
   
-
+  
+  pose = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 0.8)\
+          .type(torch.float64).to(device)
+  betas = torch.from_numpy((np.random.rand(32, beta_size) - 0.5) * 0.06) \
+          .type(torch.float64).to(device)
+  s = time()
+  trans = torch.from_numpy(np.zeros((32, 3))).type(torch.float64).to(device)
+  result, joints = model(betas, pose, trans)
+  print(time() - s)
+  
+  outmesh_path = './24joint/smpl_torch_{}.obj'
+  outjoint_path = './24joint/smpl_torch_{}.xyz'
+  for i in range(result.shape[0]):
+      model.write_obj(result[i].detach().cpu().numpy(), outmesh_path.format(i))
+      np.savetxt(outjoint_path.format(i), joints[i].detach().cpu().numpy(), delimiter=' ')
+      
 if __name__ == '__main__':
   test_gpu([1])
