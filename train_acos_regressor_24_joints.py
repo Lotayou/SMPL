@@ -116,7 +116,7 @@ class AcosRegressor(nn.Module):
         ], dtype=torch.long)
         self.limbs_index -= torch.ones_like(self.limbs_index)  # convert to 0-index
         
-        model = [ResBlock1d(indim=23*23+23*3, outdim=hidden_dim)]
+        model = [ResBlock1d(indim=23*23+24*3, outdim=hidden_dim)]
         for i in range(hidden_layer):
             model += [ResBlock1d(indim=hidden_dim, use_dropout=use_dropout)]
         model += [nn.Linear(hidden_dim, thetadim)]
@@ -139,8 +139,26 @@ class AcosRegressor(nn.Module):
         if torch.isnan(angles).any():
             print('angles nan')
         # 20190301: Only use bone vectors and angles (Bad)
-        features = torch.cat((vec.view(-1, 23*3), angles), dim=1)
+        features = torch.cat((x.view(-1, 24*3), angles), dim=1)
         return self.model(features)
+
+class ThetaLoss(nn.Module):
+    def __init__(self, eval_dim_list=None, loss_type='l1'):
+        super(ThetaLoss, self).__init__()
+        self.dims = eval_dim_list
+        if loss_type == 'l1':
+            self.loss = nn.L1Loss()
+        elif loss_type is in ['l2', 'mse']:
+            self.loss = nn.MSELoss()
+        else:
+            raise(NotImplementedError('In ThetaLoss: Unrecognized loss type {}. '.format(loss_type) \
+            + 'Valid options are: [l1, l2/mse]'))
+        
+    def __call__(self, input, target):
+        if not self.dims is None:
+            input = input[:, self.dims, :]
+            target = target[:, self.dims, :]
+        return self.loss(input, target)
 
 
 if __name__ == '__main__':
@@ -161,12 +179,15 @@ if __name__ == '__main__':
     smpl = SMPLModel(device=device,
         model_path = './model_24_joints.pkl'
     )
-    loss_op = nn.L1Loss()
+    # 20190303: New loss op, only evaluate on given dimensions
+    loss_op = ThetaLoss(eval_dim_list = [range(60)])
+    #loss_op = nn.L1Loss()
+    
     optimizer = optim.Adam(reg.parameters(), lr=0.0005, betas=(0.5, 0.999), weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.25, patience=1, verbose=True)
     
     batch_num = 0
-    ckpt_path = 'checkpoints_0301_24_joints'.format(theta_var)
+    ckpt_path = 'checkpoints_0303_24_joints'.format(theta_var)
     if not os.path.isdir(ckpt_path):
         os.mkdir(ckpt_path)
     if batch_num > 0 and os.path.isfile('%s/regressor_%03d.pth' % (ckpt_path, batch_num)):
