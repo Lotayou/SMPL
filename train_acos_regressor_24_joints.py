@@ -148,7 +148,7 @@ class ThetaLoss(nn.Module):
         self.dims = eval_dim_list
         if loss_type == 'l1':
             self.loss = nn.L1Loss()
-        elif loss_type is in ['l2', 'mse']:
+        elif loss_type in ['l2', 'mse']:
             self.loss = nn.MSELoss()
         else:
             raise(NotImplementedError('In ThetaLoss: Unrecognized loss type {}. '.format(loss_type) \
@@ -196,9 +196,9 @@ if __name__ == '__main__':
 
     # copy current file into checkpoint folder to record parameters, ugly.
     if platform == 'linux':
-        cmd = 'cp train_acos_regressor.py ./{}/snapshot.py'.format(ckpt_path)
+        cmd = 'cp train_acos_regressor_24_joints.py ./{}/snapshot.py'.format(ckpt_path)
     else:
-        cmd = r'copy train_acos_regressor.py {}\snapshot.py'.format(ckpt_path)
+        cmd = r'copy train_acos_regressor_24_joints.py {}\snapshot.py'.format(ckpt_path)
     print(cmd)
     os.system(cmd)
     
