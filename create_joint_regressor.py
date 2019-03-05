@@ -30,6 +30,11 @@ if __name__ == '__main__':
     3365,	3439
     ], dtype=np.int).reshape(24,2)
     dense = np.zeros((24, 6890), dtype=np.float64)
+    
+    SMPL_format_converter = [15, 20, 16, 14, 21, 17, 13, 22, 18, 12, 23, 
+                             19, 1, 7, 6, 0, 8, 5, 9, 4, 10, 3, 11, 2]
+    ids = ids[SMPL_format_converter]
+    
     for i in range(24):
         dense[i, ids[i][0]] = 0.5
         dense[i, ids[i][1]] = 0.5

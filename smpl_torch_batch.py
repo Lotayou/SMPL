@@ -30,6 +30,8 @@ class SMPLModel(Module):
     }
     self.faces = params['f']
     self.device = device if device is not None else torch.device('cpu')
+    
+    self.visualize_model_parameters()
     for name in ['J_regressor', 'joint_regressor', 'weights', 'posedirs', 'v_template', 'shapedirs']:
       _tensor = getattr(self, name)
       print(' Tensor {} shape: '.format(name), _tensor.shape)
@@ -119,6 +121,9 @@ class SMPLModel(Module):
       for f in self.faces + 1:
         fp.write('f %d %d %d\n' % (f[0], f[1], f[2]))
 
+  def visualize_model_parameters(self):
+    self.write_obj(self.v_template, 'v_template.obj')
+        
   def forward(self, betas, pose, trans, simplify=False):
     
     """
@@ -198,7 +203,8 @@ class SMPLModel(Module):
     # estimate 3D joint locations
     # print(result.shape)
     # print(self.joint_regressor.shape)
-    joints = torch.tensordot(result, self.joint_regressor, dims=([1], [0])).transpose(1, 2)
+    #joints = torch.tensordot(result, self.joint_regressor, dims=([1], [0])).transpose(1, 2)
+    joints = torch.tensordot(result, self.J_regressor.transpose(0, 1), dims=([1], [0])).transpose(1, 2)
     return result, joints
 
 
@@ -220,20 +226,47 @@ def test_gpu(gpu_id=[0]):
                     )
   
   
-  pose = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 0.8)\
-          .type(torch.float64).to(device)
-  betas = torch.from_numpy((np.random.rand(32, beta_size) - 0.5) * 0.06) \
+  pose = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 1)\
+          .type(torch.float64).to(device)\
+          .zero_()
+  
+  # vary_index = [0,1,2]
+  # fix_index = list(range(pose_size))
+  # for id in vary_index:
+   # fix_index.remove(id)
+  
+  # pose[0, vary_index] = 0.0
+  # for i in range(32):
+    # pose[i, vary_index] = pose[0, vary_index]
+    
+  # print(pose)
+  
+  # What if we normalize global into length 2*pi?
+  # Then it's like no rotation at all.
+  # confirm: theta is in format [ax, ay, az]  (20190304)
+  
+  # norm = torch.norm(pose[:, vary_index], dim=1, keepdim=True)
+  # pose /= norm
+  # pose *= (2 * 3.1415926535)
+  
+  #pose.zero_()
+  
+  betas = torch.from_numpy(np.zeros((32, beta_size))) \
           .type(torch.float64).to(device)
   s = time()
   trans = torch.from_numpy(np.zeros((32, 3))).type(torch.float64).to(device)
   result, joints = model(betas, pose, trans)
   print(time() - s)
+  print(joints[:,0])
+  
   
   outmesh_path = './24joint/smpl_torch_{}.obj'
   outjoint_path = './24joint/smpl_torch_{}.xyz'
   for i in range(result.shape[0]):
       model.write_obj(result[i].detach().cpu().numpy(), outmesh_path.format(i))
       np.savetxt(outjoint_path.format(i), joints[i].detach().cpu().numpy(), delimiter=' ')
-      
+  
+  
+  
 if __name__ == '__main__':
   test_gpu([1])
