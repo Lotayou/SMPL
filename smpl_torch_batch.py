@@ -155,6 +155,8 @@ class SMPLModel(Module):
     J = torch.matmul(self.J_regressor, v_shaped)
     R_cube_big = self.rodrigues(pose.view(-1, 1, 3)).reshape(batch_num, -1, 3, 3)
 
+    
+    # (1) Pose shape blending (SMPL formula(9))
     if simplify:
       v_posed = v_shaped
     else:
@@ -164,6 +166,8 @@ class SMPLModel(Module):
       lrotmin = (R_cube - I_cube).reshape(batch_num, -1, 1).squeeze(dim=2)
       v_posed = v_shaped + torch.tensordot(lrotmin, self.posedirs, dims=([1], [2]))
 
+      
+    # (2) Skinning (W)
     results = []
     results.append(
       self.with_zeros(torch.cat((R_cube_big[:, 0], torch.reshape(J[:, 0, :], (-1, 3, 1))), dim=2))
@@ -200,9 +204,8 @@ class SMPLModel(Module):
     v = torch.matmul(T, torch.reshape(rest_shape_h, (batch_num, -1, 4, 1)))
     v = torch.reshape(v, (batch_num, -1, 4))[:, :, :3]
     result = v + torch.reshape(trans, (batch_num, 1, 3))
+    
     # estimate 3D joint locations
-    # print(result.shape)
-    # print(self.joint_regressor.shape)
     #joints = torch.tensordot(result, self.joint_regressor, dims=([1], [0])).transpose(1, 2)
     joints = torch.tensordot(result, self.J_regressor.transpose(0, 1), dims=([1], [0])).transpose(1, 2)
     return result, joints

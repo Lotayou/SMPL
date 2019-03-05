@@ -177,6 +177,8 @@ if __name__ == '__main__':
     print('y:', jy)
     
     # Backward
+    
+        #Wrong:
     print('Backward Estimation:')
     jx = standard_joint[0]
     jy = joint_0[0]
@@ -190,6 +192,7 @@ if __name__ == '__main__':
     print(' regression:', axis)
     print(' GT:', theta_3[0])
     #print(jx.shape, jy.shape)
+    
     
     
     

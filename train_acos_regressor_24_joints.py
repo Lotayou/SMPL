@@ -142,27 +142,6 @@ class AcosRegressor(nn.Module):
         features = torch.cat((x.view(-1, 24*3), angles), dim=1)
         return self.model(features)
 
-class ThetaLoss(nn.Module):
-    def __init__(self, eval_dim_list=None, loss_type='l1'):
-        super(ThetaLoss, self).__init__()
-        self.dims = eval_dim_list
-        print(self.dims)
-        if loss_type == 'l1':
-            self.loss = nn.L1Loss()
-        elif loss_type in ['l2', 'mse']:
-            self.loss = nn.MSELoss()
-        else:
-            raise(NotImplementedError('In ThetaLoss: Unrecognized loss type {}. '.format(loss_type) \
-            + 'Valid options are: [l1, l2/mse]'))
-        
-    def __call__(self, input, target):
-        #print(input.shape, target.shape)
-        if not self.dims is None:
-            input = input[:, self.dims]
-            target = target[:, self.dims]
-        return self.loss(input, target)
-
-
 if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES']='0'
     torch.backends.cudnn.enabled=True
@@ -181,8 +160,6 @@ if __name__ == '__main__':
     smpl = SMPLModel(device=device,
         model_path = './model_24_joints.pkl'
     )
-    # 20190303: New loss op, only evaluate on given dimensions
-    loss_theta_op = ThetaLoss(eval_dim_list = np.arange(60))
     loss_op = nn.L1Loss()
     
     optimizer = optim.Adam(reg.parameters(), lr=0.0005, betas=(0.5, 0.999), weight_decay=1e-4)
@@ -220,7 +197,7 @@ if __name__ == '__main__':
             pred_thetas = reg(joints)
             _, recon_joints = smpl(betas, pred_thetas, trans)
             loss_joints = loss_op(recon_joints, joints)
-            loss_thetas = loss_theta_op(pred_thetas, thetas)
+            loss_thetas = loss_(pred_thetas, thetas)
             loss = loss_thetas + 5 * loss_joints
             optimizer.zero_grad()
             loss.backward()
@@ -240,7 +217,7 @@ if __name__ == '__main__':
             pred_thetas = reg(joints)
             _, recon_joints = smpl(betas, pred_thetas, trans)
             loss_joints = loss_op(recon_joints, joints)
-            loss_thetas = loss_theta_op(pred_thetas, thetas)
+            loss_thetas = loss_op(pred_thetas, thetas)
             line = 'batch %04d: loss joints: %10.6f loss thetas: % 10.6f' \
                     % (i, loss_joints.data.item(), loss_thetas.data.item())
             print(line)
