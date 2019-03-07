@@ -17,7 +17,8 @@ def create_dataset(num_samples, dataset_name, batch_size=32, theta_var=1.0, gpu_
     beta_size = 10
 
     np.random.seed(9608)
-    model = SMPLModel(device=device, model_path = 'model_24_joints.pkl')
+    model = SMPLModel(device=device, model_path = 'model_24_joints.pkl',
+                    simplify=True)
     
     d_poses = torch.from_numpy((np.random.rand(num_samples, pose_size) - 0.5) * theta_var)\
               .type(torch.float64).to(device)

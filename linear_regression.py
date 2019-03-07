@@ -125,7 +125,8 @@ if __name__ == '__main__':
     
     np.random.seed(9608)
     device = torch.device('cuda')
-    model = SMPLModel(device=device, model_path = 'model_24_joints.pkl')
+    model = SMPLModel(device=device, model_path = 'model_24_joints.pkl',
+                    simplify=True)
     #print(model.kintree_table)
     #print(model.parent)
     

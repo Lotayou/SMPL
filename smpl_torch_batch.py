@@ -6,9 +6,10 @@ import os
 from time import time
 
 class SMPLModel(Module):
-  def __init__(self, device=None, model_path='./model.pkl'):
+  def __init__(self, device=None, model_path='./model.pkl', simplify=False):
     
     super(SMPLModel, self).__init__()
+    self.simplify = simplify
     with open(model_path, 'rb') as f:
       params = pickle.load(f)
     self.J_regressor = torch.from_numpy(
@@ -124,7 +125,7 @@ class SMPLModel(Module):
   def visualize_model_parameters(self):
     self.write_obj(self.v_template, 'v_template.obj')
         
-  def forward(self, betas, pose, trans, simplify=False):
+  def forward(self, betas, pose, trans):
     
     """
           Construct a compute graph that takes in parameters and outputs a tensor as
@@ -157,7 +158,7 @@ class SMPLModel(Module):
 
     
     # (1) Pose shape blending (SMPL formula(9))
-    if simplify:
+    if self.simplify:
       v_posed = v_shaped
     else:
       R_cube = R_cube_big[:, 1:, :, :]
@@ -225,13 +226,14 @@ def test_gpu(gpu_id=[0]):
   np.random.seed(9608)
   model = SMPLModel(
                     device=device,
-                    model_path = './model_24_joints.pkl'
+                    model_path = './model_24_joints.pkl',
+                    simplify=True
                     )
   
   
   pose = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 1)\
           .type(torch.float64).to(device)\
-          .zero_()
+          #.zero_()
   
   # vary_index = [0,1,2]
   # fix_index = list(range(pose_size))
@@ -260,7 +262,7 @@ def test_gpu(gpu_id=[0]):
   trans = torch.from_numpy(np.zeros((32, 3))).type(torch.float64).to(device)
   result, joints = model(betas, pose, trans)
   print(time() - s)
-  print(joints[:,0])
+  #print(joints[:,0])
   
   
   outmesh_path = './24joint/smpl_torch_{}.obj'
@@ -268,7 +270,6 @@ def test_gpu(gpu_id=[0]):
   for i in range(result.shape[0]):
       model.write_obj(result[i].detach().cpu().numpy(), outmesh_path.format(i))
       np.savetxt(outjoint_path.format(i), joints[i].detach().cpu().numpy(), delimiter=' ')
-  
   
   
 if __name__ == '__main__':

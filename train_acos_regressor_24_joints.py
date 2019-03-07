@@ -158,7 +158,8 @@ if __name__ == '__main__':
     device = torch.device('cuda')
     reg = AcosRegressor(batch_size=batch_size).cuda()
     smpl = SMPLModel(device=device,
-        model_path = './model_24_joints.pkl'
+        model_path = './model_24_joints.pkl',
+                    simplify=True
     )
     loss_op = nn.L1Loss()
     

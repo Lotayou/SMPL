@@ -24,7 +24,8 @@ if __name__ == '__main__':
     beta_size = 10
 
     np.random.seed(9608)
-    model = SMPLModel(device=device, model_path = './model_24_joints.pkl')
+    model = SMPLModel(device=device, model_path = './model_24_joints.pkl',
+                    simplify=True)
     
     if not os.path.isdir('joint2pose_result'):
         os.makedirs('joint2pose_result')

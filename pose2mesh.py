@@ -15,12 +15,14 @@ class Pose2MeshModel(nn.Module):
         if torch.cuda.is_available():
             self.reg = AcosRegressor(hidden_dim=256).cuda()
             self.smpl = SMPLModel(device=torch.device('cuda'),
-                model_path = './model_24_joints.pkl'
+                model_path = './model_24_joints.pkl',
+                    simplify=True
             )
         else:
             self.reg = AcosRegressorRegressor(hidden_dim=256).cpu()
             self.smpl = SMPLModel(device=torch.device('cpu'),
-                model_path = './model_24_joints.pkl'
+                model_path = './model_24_joints.pkl',
+                    simplify=True
             )
            
         ckpt_path = './checkpoints_0303_24_joints'
