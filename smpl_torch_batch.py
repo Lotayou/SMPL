@@ -12,6 +12,7 @@ class SMPLModel(Module):
     self.simplify = simplify
     with open(model_path, 'rb') as f:
       params = pickle.load(f)
+    #print(params['J_regressor'].nonzero())
     self.J_regressor = torch.from_numpy(
       np.array(params['J_regressor'].todense())
     ).type(torch.float64)
@@ -128,7 +129,7 @@ class SMPLModel(Module):
   def theta2G(self, thetas, J):
     batch_num = thetas.shape[0]
     R_cube_big = self.rodrigues(thetas.view(-1, 1, 3)).reshape(batch_num, -1, 3, 3)
-    results = []    # results correspond to G terms in original paper.
+    results = []    # results correspond to G' terms in original paper.
     results.append(
       self.with_zeros(torch.cat((R_cube_big[:, 0], torch.reshape(J[:, 0, :], (-1, 3, 1))), dim=2))
     )
@@ -146,17 +147,20 @@ class SMPLModel(Module):
       )
     
     stacked = torch.stack(results, dim=1)
-    results = stacked - \
-      self.pack(
+    #print('stacked:\n',stacked[0])
+    
+    # would be pretty funny to drop this part though.
+    deformed_joint = \
         torch.matmul(
           stacked,
           torch.reshape(
             torch.cat((J, torch.zeros((batch_num, 24, 1), dtype=torch.float64).to(self.device)), dim=2),
             (batch_num, 24, 4, 1)
           )
-        )
-      )
-    return results, R_cube_big
+        ) 
+    results = stacked - self.pack(deformed_joint)
+    return results, R_cube_big    
+    #return stacked, R_cube_big
   
   def forward(self, betas, thetas, trans):
     
@@ -196,7 +200,7 @@ class SMPLModel(Module):
       R_cube = R_cube_big[:, 1:, :, :]
       I_cube = (torch.eye(3, dtype=torch.float64).unsqueeze(dim=0) + \
         torch.zeros((batch_num, R_cube.shape[1], 3, 3), dtype=torch.float64)).to(self.device)
-      lrotmin = (R_cube - I_cube).reshape(batch_num, -1, 1).squeeze(dim=2)
+      lrotmin = (R_cube - I_cube).reshape(batch_num, -1)
       v_posed = v_shaped + torch.tensordot(lrotmin, self.posedirs, dims=([1], [2]))
       
     # (2) Skinning (W)
@@ -229,7 +233,7 @@ def test_gpu(gpu_id=[0]):
   model = SMPLModel(
                     device=device,
                     model_path = './model_24_joints.pkl',
-                    simplify=True
+                    #simplify=True
                     )
   
   
