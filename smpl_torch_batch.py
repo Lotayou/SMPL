@@ -6,11 +6,13 @@ import os
 from time import time
 
 class SMPLModel(Module):
-  def __init__(self, device=None, model_path='./model.pkl'):
+  def __init__(self, device=None, model_path='./model.pkl', simplify=False):
     
     super(SMPLModel, self).__init__()
+    self.simplify = simplify
     with open(model_path, 'rb') as f:
       params = pickle.load(f)
+    #print(params['J_regressor'].nonzero())
     self.J_regressor = torch.from_numpy(
       np.array(params['J_regressor'].todense())
     ).type(torch.float64)
@@ -22,12 +24,25 @@ class SMPLModel(Module):
     self.v_template = torch.from_numpy(params['v_template']).type(torch.float64)
     self.shapedirs = torch.from_numpy(params['shapedirs']).type(torch.float64)
     self.kintree_table = params['kintree_table']
+    id_to_col = {self.kintree_table[1, i]: i
+                 for i in range(self.kintree_table.shape[1])}
+    self.parent = {
+      i: id_to_col[self.kintree_table[0, i]]
+      for i in range(1, self.kintree_table.shape[1])
+    }
     self.faces = params['f']
     self.device = device if device is not None else torch.device('cpu')
+    
+    self.visualize_model_parameters()
     for name in ['J_regressor', 'joint_regressor', 'weights', 'posedirs', 'v_template', 'shapedirs']:
       _tensor = getattr(self, name)
       print(' Tensor {} shape: '.format(name), _tensor.shape)
+      if name == 'joint_regressor':
+        np.savetxt('old_joint_regressor.txt', _tensor)
+      
       setattr(self, name, _tensor.to(device))
+     
+    #print(self.parent)
 
   @staticmethod
   def rodrigues(r):
@@ -108,7 +123,46 @@ class SMPLModel(Module):
       for f in self.faces + 1:
         fp.write('f %d %d %d\n' % (f[0], f[1], f[2]))
 
-  def forward(self, betas, pose, trans, simplify=False):
+  def visualize_model_parameters(self):
+    self.write_obj(self.v_template, 'v_template.obj')
+    
+  def theta2G(self, thetas, J):
+    batch_num = thetas.shape[0]
+    R_cube_big = self.rodrigues(thetas.view(-1, 1, 3)).reshape(batch_num, -1, 3, 3)
+    results = []    # results correspond to G' terms in original paper.
+    results.append(
+      self.with_zeros(torch.cat((R_cube_big[:, 0], torch.reshape(J[:, 0, :], (-1, 3, 1))), dim=2))
+    )
+    for i in range(1, self.kintree_table.shape[1]):
+      results.append(
+        torch.matmul(
+          results[self.parent[i]],
+          self.with_zeros(
+            torch.cat(
+              (R_cube_big[:, i], torch.reshape(J[:, i, :] - J[:, self.parent[i], :], (-1, 3, 1))),
+              dim=2
+            )
+          )
+        )
+      )
+    
+    stacked = torch.stack(results, dim=1)
+    #print('stacked:\n',stacked[0])
+    
+    # would be pretty funny to drop this part though.
+    deformed_joint = \
+        torch.matmul(
+          stacked,
+          torch.reshape(
+            torch.cat((J, torch.zeros((batch_num, 24, 1), dtype=torch.float64).to(self.device)), dim=2),
+            (batch_num, 24, 4, 1)
+          )
+        ) 
+    results = stacked - self.pack(deformed_joint)
+    return results, R_cube_big    
+    #return stacked, R_cube_big
+  
+  def forward(self, betas, thetas, trans):
     
     """
           Construct a compute graph that takes in parameters and outputs a tensor as
@@ -118,7 +172,7 @@ class SMPLModel(Module):
 
           Parameters:
           ---------
-          pose: Also known as 'theta', an [N, 24, 3] tensor indicating child joint rotation
+          thetas: an [N, 24 * 3] tensor indicating child joint rotation
           relative to parent joint. For root joint it's global orientation.
           Represented in a axis-angle format.
 
@@ -130,69 +184,37 @@ class SMPLModel(Module):
           Return:
           ------
           A 3-D tensor of [N * 6890 * 3] for vertices,
-          and the corresponding [N * 19 * 3] joint positions.
+          and the corresponding [N * 24 * 3] joint positions.
 
     """
     batch_num = betas.shape[0]
-    id_to_col = {self.kintree_table[1, i]: i
-                 for i in range(self.kintree_table.shape[1])}
-    parent = {
-      i: id_to_col[self.kintree_table[0, i]]
-      for i in range(1, self.kintree_table.shape[1])
-    }
+    
     v_shaped = torch.tensordot(betas, self.shapedirs, dims=([1], [2])) + self.v_template
     J = torch.matmul(self.J_regressor, v_shaped)
-    R_cube_big = self.rodrigues(pose.view(-1, 1, 3)).reshape(batch_num, -1, 3, 3)
-
-    if simplify:
+    G, R_cube_big = self.theta2G(thetas, J)  # pre-calculate G terms for skinning 
+    
+    # (1) Pose shape blending (SMPL formula(9))
+    if self.simplify:
       v_posed = v_shaped
     else:
       R_cube = R_cube_big[:, 1:, :, :]
       I_cube = (torch.eye(3, dtype=torch.float64).unsqueeze(dim=0) + \
         torch.zeros((batch_num, R_cube.shape[1], 3, 3), dtype=torch.float64)).to(self.device)
-      lrotmin = (R_cube - I_cube).reshape(batch_num, -1, 1).squeeze(dim=2)
+      lrotmin = (R_cube - I_cube).reshape(batch_num, -1)
       v_posed = v_shaped + torch.tensordot(lrotmin, self.posedirs, dims=([1], [2]))
-
-    results = []
-    results.append(
-      self.with_zeros(torch.cat((R_cube_big[:, 0], torch.reshape(J[:, 0, :], (-1, 3, 1))), dim=2))
-    )
-    for i in range(1, self.kintree_table.shape[1]):
-      results.append(
-        torch.matmul(
-          results[parent[i]],
-          self.with_zeros(
-            torch.cat(
-              (R_cube_big[:, i], torch.reshape(J[:, i, :] - J[:, parent[i], :], (-1, 3, 1))),
-              dim=2
-            )
-          )
-        )
-      )
-    
-    stacked = torch.stack(results, dim=1)
-    results = stacked - \
-      self.pack(
-        torch.matmul(
-          stacked,
-          torch.reshape(
-            torch.cat((J, torch.zeros((batch_num, 24, 1), dtype=torch.float64).to(self.device)), dim=2),
-            (batch_num, 24, 4, 1)
-          )
-        )
-      )
-    # Restart from here
-    T = torch.tensordot(results, self.weights, dims=([1], [1])).permute(0, 3, 1, 2)
+      
+    # (2) Skinning (W)
+    T = torch.tensordot(G, self.weights, dims=([1], [1])).permute(0, 3, 1, 2)
     rest_shape_h = torch.cat(
       (v_posed, torch.ones((batch_num, v_posed.shape[1], 1), dtype=torch.float64).to(self.device)), dim=2
     )
     v = torch.matmul(T, torch.reshape(rest_shape_h, (batch_num, -1, 4, 1)))
     v = torch.reshape(v, (batch_num, -1, 4))[:, :, :3]
     result = v + torch.reshape(trans, (batch_num, 1, 3))
+    
     # estimate 3D joint locations
-    # print(result.shape)
-    # print(self.joint_regressor.shape)
-    joints = torch.tensordot(result, self.joint_regressor, dims=([1], [0])).transpose(1, 2)
+    #joints = torch.tensordot(result, self.joint_regressor, dims=([1], [0])).transpose(1, 2)
+    joints = torch.tensordot(result, self.J_regressor.transpose(0, 1), dims=([1], [0])).transpose(1, 2)
     return result, joints
 
 
@@ -208,21 +230,53 @@ def test_gpu(gpu_id=[0]):
   beta_size = 10
 
   np.random.seed(9608)
-  model = SMPLModel(device=device)
-  for i in range(10):
-      pose = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 0.4)\
-              .type(torch.float64).to(device)
-      betas = torch.from_numpy((np.random.rand(32, beta_size) - 0.5) * 0.06) \
-              .type(torch.float64).to(device)
-      s = time()
-      trans = torch.from_numpy(np.zeros((32, 3))).type(torch.float64).to(device)
-      result, joints = model(betas, pose, trans)
-      print(time() - s)
-      
-  # outmesh_path = './smpl_torch_{}.obj'
-  # for i in range(result.shape[0]):
-      # model.write_obj(result[i], outmesh_path.format(i))
+  model = SMPLModel(
+                    device=device,
+                    model_path = './model_24_joints.pkl',
+                    #simplify=True
+                    )
   
-
+  
+  pose = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 1)\
+          .type(torch.float64).to(device)\
+          #.zero_()
+  
+  # vary_index = [0,1,2]
+  # fix_index = list(range(pose_size))
+  # for id in vary_index:
+   # fix_index.remove(id)
+  
+  # pose[0, vary_index] = 0.0
+  # for i in range(32):
+    # pose[i, vary_index] = pose[0, vary_index]
+    
+  # print(pose)
+  
+  # What if we normalize global into length 2*pi?
+  # Then it's like no rotation at all.
+  # confirm: theta is in format [ax, ay, az]  (20190304)
+  
+  # norm = torch.norm(pose[:, vary_index], dim=1, keepdim=True)
+  # pose /= norm
+  # pose *= (2 * 3.1415926535)
+  
+  #pose.zero_()
+  
+  betas = torch.from_numpy(np.zeros((32, beta_size))) \
+          .type(torch.float64).to(device)
+  s = time()
+  trans = torch.from_numpy(np.zeros((32, 3))).type(torch.float64).to(device)
+  result, joints = model(betas, pose, trans)
+  print(time() - s)
+  #print(joints[:,0])
+  
+  
+  outmesh_path = './24joint/smpl_torch_{}.obj'
+  outjoint_path = './24joint/smpl_torch_{}.xyz'
+  for i in range(result.shape[0]):
+      model.write_obj(result[i].detach().cpu().numpy(), outmesh_path.format(i))
+      np.savetxt(outjoint_path.format(i), joints[i].detach().cpu().numpy(), delimiter=' ')
+  
+  
 if __name__ == '__main__':
   test_gpu([1])
