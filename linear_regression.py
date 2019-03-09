@@ -11,69 +11,16 @@
 
 from smpl_torch_batch import SMPLModel
 import numpy as np
-import pickle
 import torch
 import os
-from torch.utils.data import Dataset, DataLoader
-
-class Joint2SMPLDataset(Dataset):
-    '''
-        Regression Data with Joint and Theta, Beta.
-        Predict Pose angles and Betas from input joints.
-        Train/val: 1:1
-        
-        TODO: creating training testing split
-    '''
-    def __init__(self, pickle_file, batch_size=64,fix_beta_zero=False):
-        super(Joint2SMPLDataset, self).__init__()
-        assert(os.path.isfile(pickle_file))
-        with open(pickle_file, 'rb') as f:
-            dataset = pickle.load(f)
-        
-        self.thetas = dataset['thetas']
-        self.joints = dataset['joints']
-        self.fix_beta_zero = fix_beta_zero
-        if not fix_beta_zero:
-            self.betas = dataset['betas']
-        
-        print(self.joints.shape)
-        self.batch_size = batch_size
-        self.length = self.joints.shape[0]
-        print(self.length)
-        
-    def __getitem__(self, item):
-        js = self.joints[item]
-        ts = self.thetas[item]
-        if self.fix_beta_zero:
-            bs = np.zeros(10, dtype=np.float64)
-        else:
-            bs = self.betas[item]
-        return {'joints': js, 'thetas': ts, 'betas': bs}
-        
-    def rand_val_batch(self):
-        length = self.length // self.batch_size
-        item = np.random.randint(0, length)
-        js = self.joints[item*self.batch_size: (item+1)*self.batch_size]
-        ts = self.thetas[item*self.batch_size: (item+1)*self.batch_size]
-        if self.fix_beta_zero:
-            bs = np.zeros((self.batch_size, 10), dtype=np.float64)
-        else:
-            bs = self.betas[item*self.batch_size: (item+1)*self.batch_size]
-        return {'joints': js, 'thetas': ts, 'betas': bs}
-        
-    def __len__(self):
-        return self.length
-
         
 '''
     SMPLModelv2: An extension to the original SMPLModel with joint2theta inference
 '''     
 class SMPLModelv2(SMPLModel):
-    def __init__(self, device=None, model_path='./model.pkl', simplify=False):
+    def __init__(self, device=None, model_path='./model.pkl', simplify=True):
         super(SMPLModelv2, self).__init__(device, model_path, simplify)
         self.J0 = torch.mm(self.J_regressor, self.v_template)
-        #print('J0:\n', self.J0)
-        #print('norm J0:\n', torch.norm(self.J0[1] - self.J0[0]))
         
     """
         https://en.wikipedia.org/wiki/Rotation_R
@@ -160,6 +107,25 @@ class SMPLModelv2(SMPLModel):
         Rs = torch.stack(Rs, dim=1)
         thetas = self.inv_rodrigues(Rs.view(-1,3,3)).reshape(batch_size, -1)
         return Rs, thetas
+        
+    '''
+        R2theta: get thetas from regressed global rotations
+    '''
+    def R2theta(self, gR):
+        batch_size = gR.shape[0]
+        
+        # backward transversal from kinematic trees.
+        Rs = [gR[:, 0]]
+        for i in range(1, self.kintree_table.shape[1]):
+            # Solve the relative rotation matrix at current joint
+            # Apply inverse rotation for all subnodes of the tree rooted at current joint
+            # Update: Compute quick inverse for rotation matrices (actually the transpose)
+            Rs.append(torch.bmm(gR[:, self.parent[i]].transpose(1,2), gR[:, i]))
+            
+        Rs = torch.stack(Rs, dim=1)
+        thetas = self.inv_rodrigues(Rs.view(-1,3,3)).reshape(batch_size, -1)
+        return Rs, thetas
+    
     
     # 20190307: unit test passed!
     def unit_test_G2theta(self):    
@@ -177,14 +143,59 @@ class SMPLModelv2(SMPLModel):
         print('theta reconstruction error: ', 
             torch.max(torch.norm(real_thetas - recon_thetas, dim=1)))
 
+    
+            
     '''
-        findR(u,v): find a rotation matrix that takes point u to v
-        both u and v are [N, 3] tensors with ||u[i]|| == ||v[i]|| != 0
+        solveR(u,v): find a rotation matrix that takes point u to v
+        both u and v are [N, 3] tensors with ||u[i]|| == ||v[i]|| == 1
     '''
-    def findR(u, v):
-        u_cross_v = torch.cross(u, v)
-        norm_n = torch.norm(u_cross_v, 0)
-        # TODO: finish up.
+    def solveR(self, u, v):
+    
+        def ssc(v):
+            #print(v)
+            Os = torch.zeros(v.shape[0], dtype=torch.float64).to(v.device)
+            m = torch.stack((
+                Os, -v[:,2], v[:,1],
+                v[:,2], Os, -v[:,0],
+                -v[:,1], v[:,0], Os), dim=1
+            )
+            V = torch.reshape(m, (-1, 3, 3))
+            #print(V)
+            return V
+    
+        eps = 1e-8
+        n = torch.cross(u, v)
+        sin_uv = torch.norm(n, dim=1)
+        cos_uv = torch.sum(u*v, dim=1)
+        # print(cos_uv)
+        # Avoid the case when cos_uv = -1
+        cos_uv = torch.max(cos_uv, torch.tensor(
+            -1+eps, dtype=torch.float64, device=self.device
+        ))
+        I = torch.eye(3, dtype=torch.float64, device=self.device).expand(u.shape[0], -1, -1)
+        N = ssc(n)
+        N2 = torch.bmm(N, N)
+        wN2 = (1 / (1 + cos_uv)).expand(3,3,-1).transpose(0,2)
+        R = I + N + wN2 * N2
+        return R
+
+    def unit_test_solveR(self):
+        print('Unit test solveR:')
+        u = torch.rand((32,3), dtype=torch.float64, device=self.device)
+        v = torch.rand((32,3), dtype=torch.float64, device=self.device)
+        nu = torch.norm(u, dim=1, keepdim=True)
+        u /= nu
+        nv = torch.norm(v, dim=1, keepdim=True)
+        v /= nv
+        
+        R = self.solveR(u, v)
+        RRt = torch.bmm(R, R.transpose(1,2))
+        for i in range(R.shape[0]):
+           print(torch.mm(R[i], R[i].transpose(0,1)))
+        print("Orthogonal check: R * R' =\n", RRt)
+        
+        v_ = torch.bmm(R, u.view(-1,3,1)).squeeze(dim=2)
+        print('|Ru-v|:', torch.norm(v_ - v, dim=1))
         
         
     '''
@@ -192,32 +203,58 @@ class SMPLModelv2(SMPLModel):
         original skeleton J0 to given input J in a batched manner
         (i.e. input [N * 24 * 3]
     '''
-    def regressG(self, j):
+    def regressR(self, j):
         # Regress 24 global rigid transformation matrices that maps skeleton J0 to J
         # calculate global translation vector
+        batch_size = j.shape[0]
         j0 = self.J0.expand_as(j)
         
-        # cache tensor
+        # Normalize j and j0 to make bones unit length.
+        parent = torch.tensor([self.parent[i] for i in range(1,24)], device=self.device)
+        dj0 = j0[:, 1:24] - j0[:, parent]
+        ndj0 = torch.norm(dj0, dim=2, keepdim=True)
+        dj0 /= ndj0
         
-        # Solve Global rotation G
-        # 20190308: TODO: normalize j as j0 to make bones equal length.
+        dj = j[:, 1:24] - j[:, parent]
+        ndj = torch.norm(dj, dim=2, keepdim=True)
+        dj /= ndj
         
+        # What about hands and feet? Ignore it?
+        # Adding additional control points.
+        batch_I3 = torch.eye(3, dtype=torch.float64, device=self.device).expand(batch_size, -1, -1)
+        Rs = [None] * 24
+        for i in range(1,24):
+            p_i = self.parent[i]
+            if Rs[p_i] is None:
+                Rs[p_i] = self.solveR(dj0[:, i-1], dj[:, i-1])
         
-        pass
+        # Set unresolved rotations to I_3
+        for i in range(24):
+            if Rs[i] is None:
+                Rs[i] = batch_I3
+            
+        Rs = torch.stack(Rs, dim=1)
+        return Rs
 
-    def unit_test_regressG(self):
-        print('Unit test regressG')
+    def unit_test_regressR(self):
+        print('Unit test regressR')
         # Only regress G0, the rest can be solved numerically.
-        real_thetas = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 1)\
+        real_thetas = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 1.5)\
           .type(torch.float64).to(self.device)
+        
         '''
             Fix global rotation, change local rotation
         '''
-        # local_theta = real_thetas[0,:3]
-        # for j in range(1,32):
-            # real_thetas[j, :3] = local_theta
+        # Test if change R[23] affects joint 23, and the shape of finger tips?
+        # Check passed, change leaf rotation does not affect leaf joints, but do affect the body shapes
+        # Consider adding another control point at head to determine head rotation.
+        undefined = [30, 31, 32, 33, 34, 35, 45, 46, 47, 66, 67, 68, 69, 70, 71]
+        index = torch.zeros(72, dtype=torch.int, device=self.device)
+        index[undefined] = 1
+        for j in range(1,32):
+            real_thetas[j] = torch.where(index == 0, real_thetas[0], real_thetas[j])
         
-        # print('thetas:', real_thetas)
+        #print('thetas:', real_thetas)
         
         betas = torch.from_numpy(np.zeros((32, beta_size))) \
           .type(torch.float64).to(self.device)
@@ -255,61 +292,54 @@ class SMPLModelv2(SMPLModel):
             np.savetxt('./joint_test_0308/fake_{}.xyz'.format(i), fake_joints[i].detach().cpu().numpy(), delimiter=' ')
             
         
-        
-        
     '''
         joint2theta: Regress theta parameters from given joints
         Note: This method assumes that beta are fixed to 0.
     '''
     def joint2theta(self, joints):
         # regression: joints to G
-        G = self.regressG(joints)
-        _, thetas = self.G2theta(G)
-        return thetas
+        globalR = self.regressR(joints)
+        return self.R2theta(globalR)
         
         
     def unit_test_joint2theta(self):
         print('Unit test joint2theta')
-        real_thetas = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 2)\
+        real_thetas = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 1)\
           .type(torch.float64).to(self.device)
         betas = torch.from_numpy(np.zeros((32, beta_size))) \
           .type(torch.float64).to(self.device)
         trans = torch.from_numpy(np.zeros((32, 3))).type(torch.float64).to(self.device)
-        _, joints = self.forward(betas, real_thetas, trans)
+        real_meshes, real_joints = self.forward(betas, real_thetas, trans)
         # check pass, bone length roughly hold (+- 2% error)
         #print('norm J:\n', torch.norm(joints[:,1] - joints[:,0], dim=1))
         
-        # infer_thetas = self.joint2theta(joints)
-        # print('Reconstruction error: ', 
-           # torch.max(torch.norm(real_thetas - infer_thetas, dim=1)))
-    
-    
+        fake_Rs, fake_thetas = self.joint2theta(real_joints)
+        print('theta Reconstruction error: ', 
+           torch.norm(real_thetas - fake_thetas, dim=1))
+        print('theta Batch #0 residual: ',
+            real_thetas[0] - fake_thetas[0])
+            
+        fake_meshes, fake_joints = self.forward(betas, fake_thetas, trans)
+        print('Joint residual:', 
+            torch.max(torch.norm(real_joints - fake_joints, dim=(2)), dim=1))
+            
+        for i in range(32):
+            model.write_obj(real_meshes[i].detach().cpu().numpy(), './joint2theta_test/real_{}.obj'.format(i))
+            model.write_obj(fake_meshes[i].detach().cpu().numpy(), './joint2theta_test/fake_{}.obj'.format(i))
+            np.savetxt('./joint2theta_test/real_{}.xyz'.format(i), real_joints[i].detach().cpu().numpy(), delimiter=' ')
+            np.savetxt('./joint2theta_test/fake_{}.xyz'.format(i), fake_joints[i].detach().cpu().numpy(), delimiter=' ')
+        
 if __name__ == '__main__':
     pose_size = 72
     beta_size = 10
-    batch_size = 64
     
-    #np.random.seed(9608)
     np.random.seed()
     device = torch.device('cuda')
     model = SMPLModelv2(device=device, model_path = 'model_24_joints.pkl',
                     simplify=True)
-    #print('k table: ', model.kintree_table)
-    #print('parent: ', model.parent)
     
     model.unit_test_inv_rodrigues()
     model.unit_test_G2theta()
-    model.unit_test_regressG()
-    #model.unit_test_joint2theta()
-    
-    # dataset = Joint2SMPLDataset('train_dataset_24_joints_1.0.pickle', batch_size, fix_beta_zero=True)
-    # sample_num = 2000
-    # item = np.random.choice(len(dataset), sample_num, replace=False)
-    # js = torch.from_numpy(dataset.joints[item]).to(device)
-    # ts = torch.from_numpy(dataset.thetas[item]).to(device)
-    # bs = torch.zeros((sample_num, 10), dtype=torch.float64, device=device)
-    
-    
-    
-    
+    model.unit_test_solveR()
+    model.unit_test_joint2theta()
     
