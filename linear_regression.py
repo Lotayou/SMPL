@@ -43,15 +43,18 @@ class SMPLModelv2(SMPLModel):
             R[:,1,0] - R[:,0,1],
             ), dim=1
         )
+        print('Axis:\n', axis)
         # Angle, beware if R is close to I
         # (theta close to 2*K*pi, imprecise arccos)
         eps = 1e-6
         axis_norm = torch.norm(axis, dim=1)
-        eps_norm = eps * torch.zeros_like(axis_norm)
-        axis_norm = torch.where(axis_norm > eps, axis_norm, eps_norm)
+        eps_norm = eps * torch.ones_like(axis_norm)
+        axis_norm = torch.where(axis_norm > eps_norm, axis_norm, eps_norm)
+        print(axis_norm)
         
         trace = R[:,0,0] + R[:,1,1] + R[:,2,2]
         angle = torch.atan2(axis_norm, trace-1)
+        print(angle)
         
         # Angle is not unique, consider fix it into [0, 2pi]
         
@@ -62,17 +65,27 @@ class SMPLModelv2(SMPLModel):
         return axis * angle.unsqueeze(dim=1)
         
     # 20190305: unit test passed!
+    # 20190310: unit test for theta==0
     def unit_test_inv_rodrigues(self):
         print('Unit test inv rodrigues:')
-        theta = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 3)\
-              .type(torch.float64).to(device).view(-1,1,3)
-        
+        print('   Zero theta:')
+        theta = torch.zeros((2, 1, 3), dtype=torch.float64, device=self.device)
         theta_recon = self.inv_rodrigues(self.rodrigues(theta))
-        print(theta_recon.shape)
-        
-        # Input theta must be pre-processed so that the theta value lies in (-pi, pi]
         print('Reconstruction error: ', 
             torch.max(torch.norm(theta.squeeze() - theta_recon, dim=1)))
+            
+        
+        # print('   Random theta:')
+        # theta = torch.from_numpy((np.random.rand(32, pose_size) - 0.5) * 3)\
+              # .type(torch.float64).to(device).view(-1,1,3)
+        
+        # theta_recon = self.inv_rodrigues(self.rodrigues(theta))
+        
+        # Input theta must be pre-processed so that the theta value lies in (-pi, pi]
+        # print('Reconstruction error: ', 
+            # torch.max(torch.norm(theta.squeeze() - theta_recon, dim=1)))
+            
+        
             
     '''
         G2theta: calculate theta from input G terms
@@ -339,7 +352,7 @@ if __name__ == '__main__':
                     simplify=True)
     
     model.unit_test_inv_rodrigues()
-    model.unit_test_G2theta()
-    model.unit_test_solveR()
-    model.unit_test_joint2theta()
+    # model.unit_test_G2theta()
+    # model.unit_test_solveR()
+    # model.unit_test_joint2theta()
     
